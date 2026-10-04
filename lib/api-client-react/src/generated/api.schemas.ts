@@ -179,6 +179,20 @@ export interface WhatsAppInboxMessage {
 
 export type WhatsAppInboxMessageList = WhatsAppInboxMessage[];
 
+export interface WhatsAppReplySuggestionsInput {
+  adultConfirmed: boolean;
+}
+
+export interface WhatsAppReplySuggestions {
+  /**
+     * @minItems 4
+     * @maxItems 4
+     * @items.minLength 1
+     * @items.maxLength 4000
+     */
+  suggestions: string[];
+}
+
 export interface WhatsAppInboxReplyInput {
   /**
      * @minLength 1

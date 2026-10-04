@@ -19,6 +19,8 @@ export * from './whatsAppInboxMessage';
 export * from './whatsAppInboxMessageList';
 export * from './whatsAppInboxMessageStatus';
 export * from './whatsAppInboxReplyInput';
+export * from './whatsAppReplySuggestions';
+export * from './whatsAppReplySuggestionsInput';
 export * from './whatsAppSettingsInput';
 export * from './whatsAppSettingsInputTone';
 export * from './whatsAppStatus';

@@ -235,6 +235,43 @@ paths:
                 $ref: "#/components/schemas/WhatsAppInboxMessageList"
         "401":
           description: Access code session required
+  /whatsapp/inbox/{inboxId}/suggestions:
+    post:
+      operationId: generateWhatsAppInboxReplySuggestions
+      tags: [whatsapp]
+      summary: Generate four reply suggestions for an adult-confirmed contact
+      parameters:
+        - name: inboxId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppReplySuggestionsInput"
+      responses:
+        "200":
+          description: Four reply suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppReplySuggestions"
+        "400":
+          description: Adult confirmation is required
+        "401":
+          description: Access code session required
+        "404":
+          description: Message not found
+        "409":
+          description: Message is no longer waiting for a reply
+        "502":
+          description: Gemini could not generate suggestions
+        "503":
+          description: Gemini is not configured or is unavailable
   /whatsapp/inbox/{inboxId}/draft:
     post:
       operationId: generateWhatsAppInboxDraft
@@ -517,6 +554,24 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/WhatsAppInboxMessage"
+    WhatsAppReplySuggestionsInput:
+      type: object
+      properties:
+        adultConfirmed:
+          type: boolean
+      required: [adultConfirmed]
+    WhatsAppReplySuggestions:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: string
+            minLength: 1
+            maxLength: 4000
+      required: [suggestions]
     WhatsAppInboxReplyInput:
       type: object
       properties:

@@ -5,6 +5,9 @@ import {
   AddWhatsAppContactResponse,
   DeleteWhatsAppContactParams,
   DismissWhatsAppInboxMessageParams,
+  GenerateWhatsAppInboxReplySuggestionsBody,
+  GenerateWhatsAppInboxReplySuggestionsParams,
+  GenerateWhatsAppInboxReplySuggestionsResponse,
   GenerateWhatsAppInboxDraftParams,
   GenerateWhatsAppInboxDraftResponse,
   GetWhatsAppStatusResponse,
@@ -30,6 +33,7 @@ import {
 import {
   CreatorReplyServiceError,
   generateCreatorReply,
+  generateCreatorReplySuggestions,
 } from "../lib/creator-reply-service";
 
 const router: IRouter = Router();
@@ -248,6 +252,73 @@ router.get("/whatsapp/inbox", async (_req, res): Promise<void> => {
     ),
   );
 });
+
+router.post(
+  "/whatsapp/inbox/:inboxId/suggestions",
+  async (req, res): Promise<void> => {
+    const params = GenerateWhatsAppInboxReplySuggestionsParams.safeParse(
+      req.params,
+    );
+    const body = GenerateWhatsAppInboxReplySuggestionsBody.safeParse(req.body);
+    if (!params.success || !body.success || !body.data.adultConfirmed) {
+      res.status(400).json({
+        error: "Confirm that this person is 18 or older before generating suggestions.",
+      });
+      return;
+    }
+
+    const [message] = await db
+      .select()
+      .from(whatsAppInboxTable)
+      .where(eq(whatsAppInboxTable.id, params.data.inboxId))
+      .limit(1);
+    if (!message) {
+      res.status(404).json({ error: "This message is no longer in the inbox." });
+      return;
+    }
+    if (message.status !== "pending") {
+      res.status(409).json({
+        error: "This message is no longer waiting for a reply.",
+      });
+      return;
+    }
+
+    const settings = await whatsAppManager.getStatus();
+    let suggestions: string[];
+    try {
+      suggestions = await generateCreatorReplySuggestions(
+        {
+          question: message.messageText,
+          adultConfirmed: true,
+          personaName: settings.creatorName.trim() || "the creator",
+          tone: settings.tone,
+          ...(message.displayName ? { clientName: message.displayName } : {}),
+          ...(settings.personaNotes
+            ? { personaNotes: settings.personaNotes }
+            : {}),
+        },
+        req.log,
+      );
+    } catch (error) {
+      if (error instanceof CreatorReplyServiceError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      req.log.error(
+        { err: error },
+        "Could not generate WhatsApp reply suggestions.",
+      );
+      res.status(503).json({
+        error: "Reply suggestions could not be generated right now.",
+      });
+      return;
+    }
+
+    res.json(
+      GenerateWhatsAppInboxReplySuggestionsResponse.parse({ suggestions }),
+    );
+  },
+);
 
 router.post(
   "/whatsapp/inbox/:inboxId/draft",

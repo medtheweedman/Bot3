@@ -260,6 +260,32 @@ export const ListWhatsAppInboxResponse = zod.array(ListWhatsAppInboxResponseItem
 
 
 /**
+ * @summary Generate four reply suggestions for an adult-confirmed contact
+ */
+
+
+
+export const GenerateWhatsAppInboxReplySuggestionsParams = zod.object({
+  "inboxId": zod.coerce.number().int().min(1)
+})
+
+export const GenerateWhatsAppInboxReplySuggestionsBody = zod.object({
+  "adultConfirmed": zod.boolean()
+})
+
+export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsItemMax = 4000;
+
+export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMin = 4;
+export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMax = 4;
+
+
+
+export const GenerateWhatsAppInboxReplySuggestionsResponse = zod.object({
+  "suggestions": zod.array(zod.string().min(1).max(generateWhatsAppInboxReplySuggestionsResponseSuggestionsItemMax)).min(generateWhatsAppInboxReplySuggestionsResponseSuggestionsMin).max(generateWhatsAppInboxReplySuggestionsResponseSuggestionsMax)
+})
+
+
+/**
  * @summary Generate and save a reply draft for an incoming message
  */
 

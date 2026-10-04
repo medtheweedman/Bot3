@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetWhatsAppStatusQueryKey,
   getListWhatsAppInboxQueryKey,
+  useGenerateWhatsAppInboxReplySuggestions,
   useListWhatsAppInbox,
   useSendWhatsAppInboxReply,
 } from "@workspace/api-client-react";
@@ -89,9 +90,25 @@ type MessageProps = {
 
 function ConversationMessage({ message, connected, sending, onSend }: MessageProps) {
   const [reply, setReply] = useState(message.replyDraft ?? "");
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestionsError, setSuggestionsError] = useState("");
+  const generateSuggestions = useGenerateWhatsAppInboxReplySuggestions();
   const uncertain = message.status === "uncertain";
   const activelySending = message.status === "sending";
   const replied = message.status === "replied";
+
+  const requestSuggestions = () => {
+    if (!adultConfirmed) return;
+    setSuggestionsError("");
+    generateSuggestions.mutate(
+      { inboxId: message.id, data: { adultConfirmed: true } },
+      {
+        onSuccess: (result) => setSuggestions(result.suggestions),
+        onError: (error) => setSuggestionsError(getErrorMessage(error)),
+      },
+    );
+  };
 
   const sendReply = () => {
     const trimmed = reply.trim();
@@ -178,35 +195,119 @@ function ConversationMessage({ message, connected, sending, onSend }: MessagePro
           )}
         </div>
       ) : (
-        <div className="mt-3 flex items-end gap-2">
-          <label htmlFor={`inbox-reply-${message.id}`} className="sr-only">
-            Reply to {message.displayName || message.phoneNumber}
-          </label>
-          <textarea
-            id={`inbox-reply-${message.id}`}
-            value={reply}
-            onChange={(event) => setReply(event.target.value)}
-            maxLength={4000}
-            rows={2}
-            placeholder="Write a reply…"
-            data-testid={`input-inbox-reply-${message.id}`}
-            className="min-h-10 flex-1 resize-y rounded-[10px] border border-[hsl(var(--input))] bg-[hsl(var(--card))] px-3 py-2.5 text-[12px] leading-[1.6] outline-none transition focus:border-[hsl(var(--primary)/.55)] focus:ring-2 focus:ring-[hsl(var(--primary)/.09)] placeholder:text-muted-foreground/65"
-          />
-          <button
-            type="button"
-            disabled={!connected || sending || !reply.trim()}
-            onClick={sendReply}
-            data-testid={`button-send-inbox-reply-${message.id}`}
-            className="flex h-10 shrink-0 items-center gap-2 rounded-[9px] bg-[hsl(var(--primary))] px-3.5 text-[10px] font-bold text-[hsl(var(--primary-foreground))] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+        <>
+          <div
+            className="mt-3 rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3"
+            data-testid={`section-reply-suggestions-${message.id}`}
           >
-            {sending ? (
-              <LoaderCircle size={13} className="animate-spin" />
-            ) : (
-              <Send size={13} />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-relaxed text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={adultConfirmed}
+                  onChange={(event) => setAdultConfirmed(event.target.checked)}
+                  data-testid={`checkbox-adult-confirmation-${message.id}`}
+                  className="mt-0.5 size-3.5 shrink-0 accent-[hsl(var(--primary))]"
+                />
+                <span>
+                  I confirm this person is at least 18. This is only for these
+                  suggestions; it does not add them to an approved list.
+                </span>
+              </label>
+              <button
+                type="button"
+                disabled={
+                  !adultConfirmed ||
+                  generateSuggestions.isPending ||
+                  suggestions.length > 0
+                }
+                onClick={requestSuggestions}
+                data-testid={`button-generate-suggestions-${message.id}`}
+                className="flex h-9 shrink-0 items-center gap-2 rounded-[9px] border border-[hsl(var(--primary)/.25)] bg-[hsl(var(--primary)/.07)] px-3 text-[10px] font-bold text-[hsl(var(--primary))] transition hover:bg-[hsl(var(--primary)/.12)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generateSuggestions.isPending ? (
+                  <LoaderCircle size={13} className="animate-spin" />
+                ) : (
+                  <Sparkles size={13} />
+                )}
+                {generateSuggestions.isPending
+                  ? "Generating…"
+                  : suggestions.length
+                    ? "Suggestions ready"
+                    : generateSuggestions.isError
+                      ? "Retry suggestions"
+                      : "Get 4 suggestions"}
+              </button>
+            </div>
+            <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">
+              When requested, this message and name are sent to Gemini to
+              generate four options. Nothing is sent on WhatsApp until you press
+              Send reply.
+            </p>
+            {suggestionsError && (
+              <p
+                role="alert"
+                data-testid={`status-suggestions-error-${message.id}`}
+                className="mt-2 text-[10px] leading-relaxed text-[hsl(var(--destructive))]"
+              >
+                {suggestionsError}
+              </p>
             )}
-            {sending ? "Sending…" : "Send reply"}
-          </button>
-        </div>
+            {suggestions.length > 0 && (
+              <div
+                className="mt-3 space-y-2"
+                aria-label="Choose a reply suggestion"
+                data-testid={`list-reply-suggestions-${message.id}`}
+              >
+                {suggestions.map((suggestion, index) => (
+                  <button
+                    key={`${message.id}-suggestion-${index + 1}`}
+                    type="button"
+                    onClick={() => setReply(suggestion)}
+                    data-testid={`button-use-suggestion-${message.id}-${index + 1}`}
+                    className="block w-full rounded-[9px] border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-left text-[10px] leading-relaxed transition hover:border-[hsl(var(--primary)/.4)] hover:bg-[hsl(var(--primary)/.035)]"
+                  >
+                    <span className="mb-1 block font-mono text-[8px] uppercase tracking-[.08em] text-muted-foreground">
+                      Suggestion {index + 1} · select to edit
+                    </span>
+                    <span className="whitespace-pre-wrap break-words">
+                      {suggestion}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="mt-3 flex items-end gap-2">
+            <label htmlFor={`inbox-reply-${message.id}`} className="sr-only">
+              Reply to {message.displayName || message.phoneNumber}
+            </label>
+            <textarea
+              id={`inbox-reply-${message.id}`}
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+              maxLength={4000}
+              rows={2}
+              placeholder="Write a reply…"
+              data-testid={`input-inbox-reply-${message.id}`}
+              className="min-h-10 flex-1 resize-y rounded-[10px] border border-[hsl(var(--input))] bg-[hsl(var(--card))] px-3 py-2.5 text-[12px] leading-[1.6] outline-none transition focus:border-[hsl(var(--primary)/.55)] focus:ring-2 focus:ring-[hsl(var(--primary)/.09)] placeholder:text-muted-foreground/65"
+            />
+            <button
+              type="button"
+              disabled={!connected || sending || !reply.trim()}
+              onClick={sendReply}
+              data-testid={`button-send-inbox-reply-${message.id}`}
+              className="flex h-10 shrink-0 items-center gap-2 rounded-[9px] bg-[hsl(var(--primary))] px-3.5 text-[10px] font-bold text-[hsl(var(--primary-foreground))] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sending ? (
+                <LoaderCircle size={13} className="animate-spin" />
+              ) : (
+                <Send size={13} />
+              )}
+              {sending ? "Sending…" : "Send reply"}
+            </button>
+          </div>
+        </>
       )}
     </article>
   );
