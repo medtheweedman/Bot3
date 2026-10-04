@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Creator Reply Studio"
+description = "A private workspace for an adult creator to draft, review, and send warm, flirty, non-explicit replies to adult clients, including a WhatsApp inbox."
+version = "1.0.0"
+id = "artifacts/creator-reply"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22620
+
+[services.development]
+run = "pnpm --filter @workspace/creator-reply run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/creator-reply", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/creator-reply/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22620"
+BASE_PATH = "/"
