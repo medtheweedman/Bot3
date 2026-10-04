@@ -1,0 +1,1 @@
+- [WhatsApp reply delivery safety](whatsapp-reply-delivery.md) — never retry a reply when the messaging provider's delivery result is uncertain.

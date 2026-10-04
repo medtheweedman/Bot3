@@ -1,15 +1,18 @@
-# [Project name]
+# Creator Reply Studio
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A private workspace for drafting and reviewing non-explicit replies to adult clients and managing conversations through WhatsApp.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
+- `pnpm --filter @workspace/creator-reply run dev` — run the web app
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `DATABASE_URL` is provided by the project's PostgreSQL database.
+- Replit Secrets: `SESSION_SECRET` (at least 32 characters) and `WHATSAPP_ACCESS_CODE` (exactly four digits) are required for sign-in.
+- `GEMINI_API_KEY` is required to enable AI reply drafting; the app can still open without it.
 
 ## Stack
 
@@ -30,7 +33,7 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The app supports standalone AI reply drafting and a WhatsApp inbox that groups incoming direct messages by number. Every WhatsApp reply is written and sent manually; there is no per-number approval step or automatic sending.
 
 ## User preferences
 
@@ -38,7 +41,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- WhatsApp captures new incoming direct text messages after pairing; it does not import earlier chat history.
+- Replies are manual. The API rejects requests to enable automatic sending.
+- If a WhatsApp send result is uncertain, the inbox item must be checked manually; do not retry the reply automatically.
 
 ## Pointers
 

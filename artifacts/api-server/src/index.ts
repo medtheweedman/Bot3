@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { whatsAppManager } from "./lib/whatsapp-manager";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  void whatsAppManager.restore().catch((error) => {
+    logger.error({ err: error }, "WhatsApp background service failed to initialize.");
+  });
 });

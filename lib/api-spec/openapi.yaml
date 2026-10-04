@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: creator-replies
+    description: AI-assisted creator reply drafting
+  - name: auth
+    description: Private workspace access
+  - name: whatsapp
+    description: WhatsApp connection and approved-contact auto-replies
 paths:
   /healthz:
     get:
@@ -24,6 +30,324 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /creator/reply:
+    post:
+      operationId: draftCreatorReply
+      tags: [creator-replies]
+      summary: Draft a creator reply
+      description: Generates a conversational, flirty, non-explicit reply for an adult creator to review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatorReplyInput"
+      responses:
+        "200":
+          description: Draft generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatorReplyDraft"
+        "400":
+          description: Invalid request
+        "503":
+          description: Gemini is busy or unavailable
+        "502":
+          description: Gemini could not return a reply
+  /auth/session:
+    get:
+      operationId: getAuthSession
+      tags: [auth]
+      summary: Check access-code session
+      responses:
+        "200":
+          description: Current session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionStatus"
+    post:
+      operationId: createAuthSession
+      tags: [auth]
+      summary: Sign in with the workspace access code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessCodeInput"
+      responses:
+        "200":
+          description: Access granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionStatus"
+        "400":
+          description: Invalid request
+        "429":
+          description: Too many sign-in attempts
+        "503":
+          description: Access code is not configured
+    delete:
+      operationId: deleteAuthSession
+      tags: [auth]
+      summary: Sign out of the workspace
+      responses:
+        "204":
+          description: Session ended
+  /whatsapp/status:
+    get:
+      operationId: getWhatsAppStatus
+      tags: [whatsapp]
+      summary: Get WhatsApp connection and auto-reply status
+      responses:
+        "200":
+          description: Current WhatsApp status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppStatus"
+        "401":
+          description: Access code session required
+  /whatsapp/connect:
+    post:
+      operationId: connectWhatsApp
+      tags: [whatsapp]
+      summary: Start or resume the WhatsApp Web connection
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppStatus"
+        "401":
+          description: Access code session required
+        "503":
+          description: WhatsApp connection is unavailable
+  /whatsapp/disconnect:
+    post:
+      operationId: disconnectWhatsApp
+      tags: [whatsapp]
+      summary: End the linked WhatsApp Web session
+      responses:
+        "200":
+          description: Disconnected status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppStatus"
+        "401":
+          description: Access code session required
+  /whatsapp/settings:
+    patch:
+      operationId: updateWhatsAppSettings
+      tags: [whatsapp]
+      summary: Update auto-reply preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppSettingsInput"
+      responses:
+        "200":
+          description: Updated WhatsApp status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppStatus"
+        "400":
+          description: Invalid settings or missing approved contacts
+        "401":
+          description: Access code session required
+        "503":
+          description: Gemini is not configured
+  /whatsapp/contacts:
+    get:
+      operationId: listWhatsAppContacts
+      tags: [whatsapp]
+      summary: List approved adult contacts
+      responses:
+        "200":
+          description: Approved contacts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppContactList"
+        "401":
+          description: Access code session required
+    post:
+      operationId: addWhatsAppContact
+      tags: [whatsapp]
+      summary: Approve an adult contact for auto-replies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppContactInput"
+      responses:
+        "201":
+          description: Contact approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppContact"
+        "400":
+          description: Invalid contact or missing adult confirmation
+        "401":
+          description: Access code session required
+        "409":
+          description: Contact is already approved
+  /whatsapp/contacts/{contactId}:
+    delete:
+      operationId: deleteWhatsAppContact
+      tags: [whatsapp]
+      summary: Remove an approved contact
+      parameters:
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Contact removed
+        "401":
+          description: Access code session required
+        "404":
+          description: Contact not found
+  /whatsapp/inbox:
+    get:
+      operationId: listWhatsAppInbox
+      tags: [whatsapp]
+      summary: List incoming messages waiting for review
+      responses:
+        "200":
+          description: Pending incoming messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppInboxMessageList"
+        "401":
+          description: Access code session required
+  /whatsapp/inbox/{inboxId}/draft:
+    post:
+      operationId: generateWhatsAppInboxDraft
+      tags: [whatsapp]
+      summary: Generate and save a reply draft for an incoming message
+      parameters:
+        - name: inboxId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Generated reply draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppInboxMessage"
+        "400":
+          description: Creator details are incomplete
+        "401":
+          description: Access code session required
+        "404":
+          description: Message not found
+        "409":
+          description: Message is no longer waiting for review
+        "503":
+          description: Gemini is not configured or is unavailable
+    patch:
+      operationId: saveWhatsAppInboxDraft
+      tags: [whatsapp]
+      summary: Save an edited reply draft
+      parameters:
+        - name: inboxId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppInboxReplyInput"
+      responses:
+        "200":
+          description: Saved reply draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppInboxMessage"
+        "400":
+          description: Invalid reply draft
+        "401":
+          description: Access code session required
+        "404":
+          description: Message not found
+        "409":
+          description: Message is no longer waiting for review
+  /whatsapp/inbox/{inboxId}/send:
+    post:
+      operationId: sendWhatsAppInboxReply
+      tags: [whatsapp]
+      summary: Send a reviewed reply to an incoming message
+      parameters:
+        - name: inboxId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsAppInboxReplyInput"
+      responses:
+        "204":
+          description: Reviewed reply sent
+        "400":
+          description: Invalid reply
+        "401":
+          description: Access code session required
+        "404":
+          description: Message not found
+        "409":
+          description: Message is already being handled or contact is no longer approved
+        "503":
+          description: WhatsApp is unavailable or send status could not be confirmed
+  /whatsapp/inbox/{inboxId}:
+    delete:
+      operationId: dismissWhatsAppInboxMessage
+      tags: [whatsapp]
+      summary: Dismiss a message from the review inbox
+      parameters:
+        - name: inboxId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Message dismissed
+        "401":
+          description: Access code session required
+        "404":
+          description: Message not found
+        "409":
+          description: Message is currently being sent
 components:
   schemas:
     HealthStatus:
@@ -33,4 +357,172 @@ components:
           type: string
       required:
         - status
+    CreatorReplyInput:
+      type: object
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        adultConfirmed:
+          type: boolean
+        clientName:
+          type: string
+          maxLength: 80
+        personaName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        tone:
+          type: string
+          enum: [playful, warm, confident, soft, spicy]
+        personaNotes:
+          type: string
+          maxLength: 1000
+      required: [question, adultConfirmed, personaName, tone]
+    CreatorReplyDraft:
+      type: object
+      properties:
+        reply:
+          type: string
+      required: [reply]
+    AuthSessionStatus:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+      required: [authenticated]
+    AccessCodeInput:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 4
+          maxLength: 4
+          pattern: '^[0-9]{4}$'
+      required: [code]
+    WhatsAppStatus:
+      type: object
+      properties:
+        connection:
+          type: string
+          enum: [disconnected, connecting, awaiting_qr, connected, error]
+        phoneNumber:
+          type: ["string", "null"]
+        qrDataUrl:
+          type: ["string", "null"]
+        lastError:
+          type: ["string", "null"]
+        autoReplyEnabled:
+          type: boolean
+        creatorName:
+          type: string
+          maxLength: 80
+        tone:
+          type: string
+          enum: [playful, warm, confident, soft, spicy]
+        personaNotes:
+          type: ["string", "null"]
+        approvedContactCount:
+          type: integer
+          minimum: 0
+        lastReplyAt:
+          type: ["string", "null"]
+          format: date-time
+      required:
+        - connection
+        - phoneNumber
+        - qrDataUrl
+        - lastError
+        - autoReplyEnabled
+        - creatorName
+        - tone
+        - personaNotes
+        - approvedContactCount
+        - lastReplyAt
+    WhatsAppSettingsInput:
+      type: object
+      properties:
+        autoReplyEnabled:
+          type: boolean
+        creatorName:
+          type: string
+          maxLength: 80
+        tone:
+          type: string
+          enum: [playful, warm, confident, soft, spicy]
+        personaNotes:
+          type: ["string", "null"]
+          maxLength: 1000
+      required: [autoReplyEnabled, creatorName, tone, personaNotes]
+    WhatsAppContactInput:
+      type: object
+      properties:
+        phoneNumber:
+          type: string
+          minLength: 7
+          maxLength: 20
+        displayName:
+          type: ["string", "null"]
+          maxLength: 80
+        adultConfirmed:
+          type: boolean
+      required: [phoneNumber, adultConfirmed]
+    WhatsAppContact:
+      type: object
+      properties:
+        id:
+          type: integer
+        phoneNumber:
+          type: string
+        displayName:
+          type: ["string", "null"]
+        adultConfirmed:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, phoneNumber, displayName, adultConfirmed, createdAt]
+    WhatsAppContactList:
+      type: array
+      items:
+        $ref: "#/components/schemas/WhatsAppContact"
+    WhatsAppInboxMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        phoneNumber:
+          type: string
+        displayName:
+          type: ["string", "null"]
+          maxLength: 80
+        messageText:
+          type: string
+          maxLength: 4000
+        replyDraft:
+          type: ["string", "null"]
+          maxLength: 4000
+        isAdultApproved:
+          type: boolean
+        status:
+          type: string
+          enum: [pending, sending, uncertain, replied]
+        receivedAt:
+          type: string
+          format: date-time
+      required: [id, phoneNumber, displayName, messageText, replyDraft, isAdultApproved, status, receivedAt]
+    WhatsAppInboxMessageList:
+      type: array
+      items:
+        $ref: "#/components/schemas/WhatsAppInboxMessage"
+    WhatsAppInboxReplyInput:
+      type: object
+      properties:
+        reply:
+          type: string
+          minLength: 1
+          maxLength: 4000
+      required: [reply]
 
