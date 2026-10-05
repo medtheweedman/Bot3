@@ -120,9 +120,18 @@ function decryptAuthState(envelope: string): PersistedAuth {
 }
 
 function extractPhoneDigits(jid: string): string | null {
-  if (!jid.endsWith("@s.whatsapp.net")) return null;
+  if (!jid.endsWith("@s.whatsapp.net") && !jid.endsWith("@c.us")) return null;
   const digits = jid.split("@", 1)[0]?.split(":", 1)[0];
   return digits && /^\d{7,15}$/.test(digits) ? digits : null;
+}
+
+function isPhoneJid(jid: string | null | undefined): jid is string {
+  return Boolean(jid?.endsWith("@s.whatsapp.net") || jid?.endsWith("@c.us"));
+}
+
+function getJidServer(jid: string | null | undefined): string {
+  if (!jid) return "unknown";
+  return jid.slice(jid.lastIndexOf("@") + 1);
 }
 
 function displayPhoneNumber(jid: string | undefined): string | null {
@@ -334,6 +343,21 @@ class WhatsAppManager {
     });
 
     socket.ev.on("messages.upsert", ({ type, messages }) => {
+      logger.info(
+        {
+          upsertType: type,
+          messageCount: messages.length,
+          textMessageCount: messages.filter((message) => !!extractText(message))
+            .length,
+          remoteJidServers: [
+            ...new Set(messages.map((message) => getJidServer(message.key.remoteJid))),
+          ],
+          alternatePhoneJidCount: messages.filter((message) =>
+            isPhoneJid(message.key.remoteJidAlt),
+          ).length,
+        },
+        "WhatsApp message batch received.",
+      );
       if (type !== "notify") return;
       for (const message of messages) {
         void this.handleIncomingMessage(socket, message).catch((error) => {
@@ -431,10 +455,38 @@ class WhatsAppManager {
     ) {
       return;
     }
-    const jid = message.key.remoteJid;
+    const remoteJid = message.key.remoteJid;
     const messageId = message.key.id;
-    if (!jid || !messageId || !jid.endsWith("@s.whatsapp.net")) return;
-    const phoneDigits = extractPhoneDigits(jid);
+    if (
+      !remoteJid ||
+      !messageId ||
+      remoteJid.endsWith("@g.us") ||
+      remoteJid.endsWith("@broadcast") ||
+      remoteJid.endsWith("@newsletter")
+    ) {
+      return;
+    }
+
+    let phoneJid = isPhoneJid(remoteJid)
+      ? remoteJid
+      : isPhoneJid(message.key.remoteJidAlt)
+        ? message.key.remoteJidAlt
+        : null;
+    if (
+      !phoneJid &&
+      (remoteJid.endsWith("@lid") || remoteJid.endsWith("@hosted.lid"))
+    ) {
+      try {
+        phoneJid = await socket.signalRepository.lidMapping.getPNForLID(remoteJid);
+      } catch {
+        logger.warn(
+          { jidServer: getJidServer(remoteJid) },
+          "Could not map an incoming WhatsApp LID to a phone number.",
+        );
+        return;
+      }
+    }
+    const phoneDigits = phoneJid ? extractPhoneDigits(phoneJid) : null;
     if (!phoneDigits) return;
 
     const text = extractText(message);
