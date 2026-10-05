@@ -260,7 +260,7 @@ export const ListWhatsAppInboxResponse = zod.array(ListWhatsAppInboxResponseItem
 
 
 /**
- * @summary Generate four reply suggestions for an adult-confirmed contact
+ * @summary Generate two reply suggestions for an adult-confirmed contact
  */
 
 
@@ -275,8 +275,8 @@ export const GenerateWhatsAppInboxReplySuggestionsBody = zod.object({
 
 export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsItemMax = 4000;
 
-export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMin = 4;
-export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMax = 4;
+export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMin = 2;
+export const generateWhatsAppInboxReplySuggestionsResponseSuggestionsMax = 2;
 
 
 

@@ -5,7 +5,23 @@ import {
 } from "@workspace/api-zod";
 import type { Logger } from "pino";
 
+// Free-tier eligible Gemini models that support text generateContent.
 const GEMINI_MODELS = [
+  {
+    id: "gemini-3.5-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-3.1-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-2.5-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+    thinkingConfig: { thinkingBudget: 0 },
+  },
   {
     id: "gemini-3.8-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
@@ -27,16 +43,6 @@ const GEMINI_MODELS = [
     thinkingConfig: { thinkingLevel: "low" },
   },
   {
-    id: "gemini-3.5-flash-lite",
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-    thinkingConfig: { thinkingLevel: "low" },
-  },
-  {
-    id: "gemini-3.1-flash-lite",
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
-    thinkingConfig: { thinkingLevel: "low" },
-  },
-  {
     id: "gemini-3-flash-preview",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
     thinkingConfig: { thinkingLevel: "low" },
@@ -44,11 +50,6 @@ const GEMINI_MODELS = [
   {
     id: "gemini-2.5-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-    thinkingConfig: { thinkingBudget: 0 },
-  },
-  {
-    id: "gemini-2.5-flash-lite",
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
     thinkingConfig: { thinkingBudget: 0 },
   },
   {
@@ -314,7 +315,7 @@ function buildSystemInstruction(
 
   if (responseMode === "suggestions") {
     rules.push(
-      'Return exactly four different reply options as valid JSON in this format: {"suggestions":["option 1","option 2","option 3","option 4"]}.',
+      'Return exactly two different reply options as valid JSON in this format: {"suggestions":["option 1","option 2"]}.',
       "Each option must be a complete short message the creator can choose, edit, and send. Do not include labels, markdown, or text outside the JSON.",
     );
   } else {
@@ -379,14 +380,14 @@ function parseSuggestions(generatedText: string): string[] {
     Array.isArray(parsed.suggestions)
       ? parsed.suggestions
       : null;
-  if (!values || values.length < 4) {
+  if (!values || values.length < 2) {
     throw new CreatorReplyServiceError(
-      "Gemini did not return four suggestions. Try again.",
+      "Gemini did not return two suggestions. Try again.",
       502,
     );
   }
 
-  const suggestions = values.slice(0, 4).map((value) =>
+  const suggestions = values.slice(0, 2).map((value) =>
     typeof value === "string" ? value.trim() : "",
   );
   if (suggestions.some((suggestion) => !suggestion || suggestion.length > 4000)) {
@@ -408,9 +409,9 @@ export async function generateCreatorReplySuggestions(
       systemInstruction: buildSystemInstruction(parsed, "suggestions"),
       clientMessage: buildClientMessage(parsed),
       tone: parsed.tone,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 1024,
       responseMimeType: "application/json",
-      timeoutMs: 6000,
+      timeoutMs: 4000,
       totalTimeoutMs: 12000,
       attemptsPerModel: 1,
     },

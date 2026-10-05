@@ -236,12 +236,12 @@ function ConversationMessage({ message, connected, sending, onSend }: MessagePro
                     ? "Suggestions ready"
                     : generateSuggestions.isError
                       ? "Retry suggestions"
-                      : "Get 4 suggestions"}
+                      : "Get 2 suggestions"}
               </button>
             </div>
             <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">
               When requested, this message and name are sent to Gemini to
-              generate four options. Nothing is sent on WhatsApp until you press
+              generate two options. Nothing is sent on WhatsApp until you press
               Send reply.
             </p>
             {suggestionsError && (

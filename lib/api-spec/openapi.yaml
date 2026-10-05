@@ -239,7 +239,7 @@ paths:
     post:
       operationId: generateWhatsAppInboxReplySuggestions
       tags: [whatsapp]
-      summary: Generate four reply suggestions for an adult-confirmed contact
+      summary: Generate two reply suggestions for an adult-confirmed contact
       parameters:
         - name: inboxId
           in: path
@@ -255,7 +255,7 @@ paths:
               $ref: "#/components/schemas/WhatsAppReplySuggestionsInput"
       responses:
         "200":
-          description: Four reply suggestions
+          description: Two reply suggestions
           content:
             application/json:
               schema:
@@ -565,8 +565,8 @@ components:
       properties:
         suggestions:
           type: array
-          minItems: 4
-          maxItems: 4
+          minItems: 2
+          maxItems: 2
           items:
             type: string
             minLength: 1

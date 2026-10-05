@@ -185,8 +185,8 @@ export interface WhatsAppReplySuggestionsInput {
 
 export interface WhatsAppReplySuggestions {
   /**
-     * @minItems 4
-     * @maxItems 4
+     * @minItems 2
+     * @maxItems 2
      * @items.minLength 1
      * @items.maxLength 4000
      */

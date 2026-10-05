@@ -1108,7 +1108,7 @@ export const getGenerateWhatsAppInboxReplySuggestionsUrl = (inboxId: number,) =>
 }
 
 /**
- * @summary Generate four reply suggestions for an adult-confirmed contact
+ * @summary Generate two reply suggestions for an adult-confirmed contact
  */
 export const generateWhatsAppInboxReplySuggestions = async (inboxId: number,
     whatsAppReplySuggestionsInput: WhatsAppReplySuggestionsInput, options?: Parameters<typeof customFetch>[1]): Promise<WhatsAppReplySuggestions> => {
@@ -1175,7 +1175,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type GenerateWhatsAppInboxReplySuggestionsMutationVariables = {inboxId: number;data: BodyType<WhatsAppReplySuggestionsInput>}
 
     /**
- * @summary Generate four reply suggestions for an adult-confirmed contact
+ * @summary Generate two reply suggestions for an adult-confirmed contact
  */
 export const useGenerateWhatsAppInboxReplySuggestions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateWhatsAppInboxReplySuggestions>>, TError,GenerateWhatsAppInboxReplySuggestionsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
