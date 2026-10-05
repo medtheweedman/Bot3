@@ -1,1 +1,2 @@
 - [WhatsApp reply delivery safety](whatsapp-reply-delivery.md) — never retry a reply when the messaging provider's delivery result is uncertain.
+- [Imported artifact registration](imported-artifact-registration.md) — GitHub artifact files may need workspace registration before they appear in previews or workflows.
