@@ -11,6 +11,10 @@ const GEMINI_MODELS = [
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
   },
   {
+    id: "gemini-2.5-flash",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+  },
+  {
     id: "gemini-3.7-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
   },
@@ -83,6 +87,9 @@ async function requestGeminiText(
     tone: CreatorReplyInput["tone"];
     maxOutputTokens: number;
     responseMimeType?: "application/json";
+    timeoutMs?: number;
+    maxModels?: number;
+    attemptsPerModel?: number;
   },
   log: Pick<Logger, "warn" | "error">,
 ): Promise<string> {
@@ -109,8 +116,11 @@ async function requestGeminiText(
 
   let upstream: Response | undefined;
   let networkError: unknown;
-  for (const [modelIndex, model] of GEMINI_MODELS.entries()) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+  let timedOut = false;
+  const models = GEMINI_MODELS.slice(0, input.maxModels ?? GEMINI_MODELS.length);
+  const attemptsPerModel = input.attemptsPerModel ?? 2;
+  for (const [modelIndex, model] of models.entries()) {
+    for (let attempt = 0; attempt < attemptsPerModel; attempt += 1) {
       try {
         const response = await fetch(model.url, {
           method: "POST",
@@ -119,12 +129,13 @@ async function requestGeminiText(
             "x-goog-api-key": apiKey,
           },
           body: requestBody,
+          signal: AbortSignal.timeout(input.timeoutMs ?? 30_000),
         });
 
         if (
           response.ok ||
           !RETRYABLE_STATUSES.has(response.status) ||
-          attempt === 1
+          attempt === attemptsPerModel - 1
         ) {
           upstream = response;
           break;
@@ -137,25 +148,30 @@ async function requestGeminiText(
         await response.text();
       } catch (error) {
         networkError = error;
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+          timedOut = true;
+        }
         log.warn(
           { model: model.id, attempt: attempt + 1 },
           "Gemini request failed; retrying reply generation",
         );
       }
 
-      await wait(attempt === 0 ? 500 : 1000);
+      if (attempt + 1 < attemptsPerModel) {
+        await wait(attempt === 0 ? 500 : 1000);
+      }
     }
 
     if (upstream?.ok) break;
     if (upstream && !RETRYABLE_STATUSES.has(upstream.status)) break;
 
-    if (modelIndex < GEMINI_MODELS.length - 1) {
+    if (modelIndex < models.length - 1) {
       if (upstream) {
         log.warn(
           {
             model: model.id,
             status: upstream.status,
-            fallbackModel: GEMINI_MODELS[modelIndex + 1].id,
+            fallbackModel: models[modelIndex + 1].id,
           },
           "Switching to Gemini fallback model",
         );
@@ -169,8 +185,10 @@ async function requestGeminiText(
   if (!upstream) {
     log.error({ err: networkError }, "Gemini request failed");
     throw new CreatorReplyServiceError(
-      "Gemini is unavailable right now. Try again shortly.",
-      502,
+      timedOut
+        ? "Gemini took too long to respond. Please retry."
+        : "Gemini is unavailable right now. Please retry shortly.",
+      timedOut ? 503 : 502,
     );
   }
 
@@ -337,6 +355,9 @@ export async function generateCreatorReplySuggestions(
       tone: parsed.tone,
       maxOutputTokens: 2048,
       responseMimeType: "application/json",
+      timeoutMs: 6000,
+      maxModels: 2,
+      attemptsPerModel: 1,
     },
     log,
   );
