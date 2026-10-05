@@ -9,22 +9,57 @@ const GEMINI_MODELS = [
   {
     id: "gemini-3.8-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-  },
-  {
-    id: "gemini-2.5-flash",
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
   },
   {
     id: "gemini-3.7-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
   },
   {
     id: "gemini-3.6-flash",
     url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-3.5-flash",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-3.5-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-3.1-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-3-flash-preview",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
+    thinkingConfig: { thinkingLevel: "low" },
+  },
+  {
+    id: "gemini-2.5-flash",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    thinkingConfig: { thinkingBudget: 0 },
+  },
+  {
+    id: "gemini-2.5-flash-lite",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+    thinkingConfig: { thinkingBudget: 0 },
+  },
+  {
+    id: "gemini-2.5-pro",
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+    thinkingConfig: { thinkingBudget: 128 },
   },
 ] as const;
 
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const FALLBACK_STATUSES = new Set([...RETRYABLE_STATUSES, 404, 410]);
 const wait = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -88,7 +123,7 @@ async function requestGeminiText(
     maxOutputTokens: number;
     responseMimeType?: "application/json";
     timeoutMs?: number;
-    maxModels?: number;
+    totalTimeoutMs?: number;
     attemptsPerModel?: number;
   },
   log: Pick<Logger, "warn" | "error">,
@@ -101,26 +136,37 @@ async function requestGeminiText(
     );
   }
 
-  const requestBody = JSON.stringify({
-    systemInstruction: { parts: [{ text: input.systemInstruction }] },
-    contents: [{ role: "user", parts: [{ text: input.clientMessage }] }],
-    generationConfig: {
-      temperature: input.tone === "spicy" ? 0.95 : 0.8,
-      maxOutputTokens: input.maxOutputTokens,
-      thinkingConfig: { thinkingLevel: "low" },
-      ...(input.responseMimeType
-        ? { responseMimeType: input.responseMimeType }
-        : {}),
-    },
-  });
-
   let upstream: Response | undefined;
   let networkError: unknown;
   let timedOut = false;
-  const models = GEMINI_MODELS.slice(0, input.maxModels ?? GEMINI_MODELS.length);
-  const attemptsPerModel = input.attemptsPerModel ?? 2;
+  const deadline = input.totalTimeoutMs
+    ? Date.now() + input.totalTimeoutMs
+    : undefined;
+  const models = GEMINI_MODELS;
+  const attemptsPerModel = input.attemptsPerModel ?? 1;
   for (const [modelIndex, model] of models.entries()) {
+    if (deadline && Date.now() >= deadline) {
+      timedOut = true;
+      break;
+    }
+    const requestBody = JSON.stringify({
+      systemInstruction: { parts: [{ text: input.systemInstruction }] },
+      contents: [{ role: "user", parts: [{ text: input.clientMessage }] }],
+      generationConfig: {
+        temperature: input.tone === "spicy" ? 0.95 : 0.8,
+        maxOutputTokens: input.maxOutputTokens,
+        thinkingConfig: model.thinkingConfig,
+        ...(input.responseMimeType
+          ? { responseMimeType: input.responseMimeType }
+          : {}),
+      },
+    });
     for (let attempt = 0; attempt < attemptsPerModel; attempt += 1) {
+      const remainingMs = deadline ? deadline - Date.now() : Infinity;
+      if (remainingMs <= 0) {
+        timedOut = true;
+        break;
+      }
       try {
         const response = await fetch(model.url, {
           method: "POST",
@@ -129,7 +175,9 @@ async function requestGeminiText(
             "x-goog-api-key": apiKey,
           },
           body: requestBody,
-          signal: AbortSignal.timeout(input.timeoutMs ?? 30_000),
+          signal: AbortSignal.timeout(
+            Math.max(1, Math.min(input.timeoutMs ?? 30_000, remainingMs)),
+          ),
         });
 
         if (
@@ -163,7 +211,11 @@ async function requestGeminiText(
     }
 
     if (upstream?.ok) break;
-    if (upstream && !RETRYABLE_STATUSES.has(upstream.status)) break;
+    if (upstream && !FALLBACK_STATUSES.has(upstream.status)) break;
+    if (deadline && Date.now() >= deadline) {
+      timedOut = true;
+      break;
+    }
 
     if (modelIndex < models.length - 1) {
       if (upstream) {
@@ -285,6 +337,9 @@ export async function generateCreatorReply(
       clientMessage: buildClientMessage(parsed),
       tone: parsed.tone,
       maxOutputTokens: 1024,
+      timeoutMs: 6000,
+      totalTimeoutMs: 12000,
+      attemptsPerModel: 1,
     },
     log,
   );
@@ -356,7 +411,7 @@ export async function generateCreatorReplySuggestions(
       maxOutputTokens: 2048,
       responseMimeType: "application/json",
       timeoutMs: 6000,
-      maxModels: 2,
+      totalTimeoutMs: 12000,
       attemptsPerModel: 1,
     },
     log,
