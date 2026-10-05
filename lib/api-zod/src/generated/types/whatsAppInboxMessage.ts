@@ -10,6 +10,11 @@ import type { WhatsAppInboxMessageStatus } from './whatsAppInboxMessageStatus';
 export interface WhatsAppInboxMessage {
   /** @minimum 1 */
   id: number;
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  contactId: number | null;
   phoneNumber: string;
   /**
      * @maxLength 80
@@ -24,6 +29,8 @@ export interface WhatsAppInboxMessage {
      */
   replyDraft: string | null;
   isAdultApproved: boolean;
+  /** @nullable */
+  conversationSummary: string | null;
   status: WhatsAppInboxMessageStatus;
   receivedAt: Date;
 }

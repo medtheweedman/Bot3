@@ -37,6 +37,14 @@ import {
 } from "@workspace/api-zod";
 import QRCode from "qrcode";
 import { logger } from "./logger";
+import {
+  generateWhatsAppReplyWithMemory,
+} from "./creator-reply-service";
+import {
+  getWhatsAppConversationContext,
+  recordWhatsAppConversationMessage,
+  saveWhatsAppConversationSummary,
+} from "./whatsapp-memory";
 
 type PersistedAuth = {
   creds: AuthenticationCreds;
@@ -181,11 +189,12 @@ class WhatsAppManager {
   private connectTask: Promise<void> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private persistenceQueue: Promise<void> = Promise.resolve();
+  private autoReplyQueue: Promise<void> = Promise.resolve();
+  private lastAutoReplyStartedAt = 0;
   private lastMessageCleanupAt = 0;
 
   async restore(): Promise<void> {
     await this.ensureSettings();
-    await this.updateSettings({ autoReplyEnabled: false });
     await db
       .update(whatsAppInboxTable)
       .set({ status: "uncertain", updatedAt: new Date() })
@@ -450,8 +459,7 @@ class WhatsAppManager {
   ): Promise<void> {
     if (
       this.socket !== socket ||
-      this.connection !== "connected" ||
-      message.key.fromMe
+      this.connection !== "connected"
     ) {
       return;
     }
@@ -492,6 +500,16 @@ class WhatsAppManager {
     const text = extractText(message);
     if (!text || text.length > 4000) return;
 
+    if (message.key.fromMe) {
+      await recordWhatsAppConversationMessage({
+        messageId,
+        phoneNumber: phoneDigits,
+        direction: "creator",
+        messageText: text,
+      });
+      return;
+    }
+
     const [claimed] = await db
       .insert(whatsAppProcessedMessagesTable)
       .values({ messageId })
@@ -499,22 +517,45 @@ class WhatsAppManager {
       .returning({ messageId: whatsAppProcessedMessagesTable.messageId });
     if (!claimed) return;
 
-    await this.pruneProcessedMessageIds();
-
     let inboxItem: { id: number } | undefined;
     try {
+      await this.pruneProcessedMessageIds();
+      const [approvedContact] = await db
+        .select({ id: whatsAppContactsTable.id })
+        .from(whatsAppContactsTable)
+        .where(eq(whatsAppContactsTable.phoneNumber, phoneDigits))
+        .limit(1);
       [inboxItem] = await db
         .insert(whatsAppInboxTable)
         .values({
           messageId,
-          contactId: null,
+          contactId: approvedContact?.id ?? null,
           phoneNumber: phoneDigits,
           displayName: message.pushName?.trim().slice(0, 80) || null,
           messageText: text,
         })
         .onConflictDoNothing()
         .returning({ id: whatsAppInboxTable.id });
+      if (inboxItem) {
+        await recordWhatsAppConversationMessage({
+          messageId,
+          phoneNumber: phoneDigits,
+          direction: "contact",
+          messageText: text,
+        });
+      }
     } catch (error) {
+      if (inboxItem) {
+        await db
+          .delete(whatsAppInboxTable)
+          .where(eq(whatsAppInboxTable.id, inboxItem.id))
+          .catch((rollbackError) => {
+            logger.error(
+              { err: rollbackError },
+              "Could not remove a partial inbox record after history storage failed.",
+            );
+          });
+      }
       await db
         .delete(whatsAppProcessedMessagesTable)
         .where(eq(whatsAppProcessedMessagesTable.messageId, messageId))
@@ -527,6 +568,98 @@ class WhatsAppManager {
       throw error;
     }
     if (!inboxItem) return;
+    await this.enqueueAutoReply(socket, inboxItem.id);
+  }
+
+  private async enqueueAutoReply(
+    socket: ReturnType<typeof makeWASocket>,
+    inboxId: number,
+  ): Promise<void> {
+    const settings = await this.ensureSettings();
+    if (!settings.autoReplyEnabled) return;
+
+    const task = this.autoReplyQueue.then(async () => {
+      const spacingMs = 1_000 - (Date.now() - this.lastAutoReplyStartedAt);
+      if (spacingMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, spacingMs));
+      }
+      this.lastAutoReplyStartedAt = Date.now();
+      await this.processAutoReply(socket, inboxId);
+    });
+    this.autoReplyQueue = task.catch((error) => {
+      logger.warn({ err: error }, "Automatic WhatsApp reply was not sent.");
+    });
+    await task.catch(() => undefined);
+  }
+
+  private async processAutoReply(
+    socket: ReturnType<typeof makeWASocket>,
+    inboxId: number,
+  ): Promise<void> {
+    const settings = await this.ensureSettings();
+    if (!settings.autoReplyEnabled || this.socket !== socket) return;
+
+    const [record] = await db
+      .select({
+        message: whatsAppInboxTable,
+        adultConfirmed: whatsAppContactsTable.adultConfirmed,
+      })
+      .from(whatsAppInboxTable)
+      .leftJoin(
+        whatsAppContactsTable,
+        eq(whatsAppInboxTable.contactId, whatsAppContactsTable.id),
+      )
+      .where(eq(whatsAppInboxTable.id, inboxId))
+      .limit(1);
+    if (
+      !record ||
+      record.message.status !== "pending" ||
+      record.adultConfirmed !== true
+    ) {
+      return;
+    }
+
+    const context = await getWhatsAppConversationContext(
+      record.message.phoneNumber,
+    );
+    const generated = await generateWhatsAppReplyWithMemory(
+      {
+        question: record.message.messageText,
+        adultConfirmed: true,
+        personaName: settings.creatorName.trim() || "the creator",
+        tone: getSafeTone(settings.tone),
+        ...(record.message.displayName
+          ? { clientName: record.message.displayName }
+          : {}),
+        ...(settings.personaNotes
+          ? { personaNotes: settings.personaNotes }
+          : {}),
+      },
+      context,
+      logger,
+    );
+
+    await saveWhatsAppConversationSummary(
+      record.message.phoneNumber,
+      generated.summary,
+    );
+
+    const currentSettings = await this.ensureSettings();
+    const [currentContact] = await db
+      .select({ adultConfirmed: whatsAppContactsTable.adultConfirmed })
+      .from(whatsAppContactsTable)
+      .where(eq(whatsAppContactsTable.id, record.message.contactId!))
+      .limit(1);
+    if (
+      !currentSettings.autoReplyEnabled ||
+      currentContact?.adultConfirmed !== true ||
+      this.socket !== socket ||
+      this.connection !== "connected"
+    ) {
+      return;
+    }
+
+    await this.sendReviewedReply(inboxId, generated.reply);
   }
 
   async sendReviewedReply(inboxId: number, replyText: string): Promise<void> {
@@ -595,10 +728,16 @@ class WhatsAppManager {
       );
     }
 
+    let sentMessage: WAMessage;
     try {
-      await socket.sendMessage(`${message.phoneNumber}@s.whatsapp.net`, {
-        text: reply,
-      });
+      const result = await socket.sendMessage(
+        `${message.phoneNumber}@s.whatsapp.net`,
+        {
+          text: reply,
+        },
+      );
+      if (!result) throw new Error("WhatsApp did not return a sent message.");
+      sentMessage = result;
     } catch (error) {
       await db
         .update(whatsAppInboxTable)
@@ -620,6 +759,13 @@ class WhatsAppManager {
     }
 
     try {
+      await recordWhatsAppConversationMessage({
+        messageId:
+          sentMessage.key.id ?? `creator-reply-${message.id}`,
+        phoneNumber: message.phoneNumber,
+        direction: "creator",
+        messageText: reply,
+      });
       const [replied] = await db
         .update(whatsAppInboxTable)
         .set({ status: "replied", updatedAt: new Date() })
@@ -673,7 +819,8 @@ class WhatsAppManager {
       .delete(whatsAppProcessedMessagesTable)
       .where(lt(whatsAppProcessedMessagesTable.processedAt, cutoff));
     await db
-      .delete(whatsAppInboxTable)
+      .update(whatsAppInboxTable)
+      .set({ status: "archived", updatedAt: new Date() })
       .where(
         and(
           eq(whatsAppInboxTable.status, "pending"),

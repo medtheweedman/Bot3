@@ -14,4 +14,5 @@ export const WhatsAppInboxMessageStatus = {
   sending: 'sending',
   uncertain: 'uncertain',
   replied: 'replied',
+  archived: 'archived',
 } as const;

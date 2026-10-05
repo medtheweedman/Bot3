@@ -10,6 +10,7 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -50,7 +51,12 @@ export const whatsAppInboxStatus = pgEnum("whatsapp_inbox_status", [
   "sending",
   "uncertain",
   "replied",
+  "archived",
 ]);
+export const whatsAppConversationDirection = pgEnum(
+  "whatsapp_conversation_direction",
+  ["contact", "creator"],
+);
 
 export const whatsAppInboxTable = pgTable(
   "whatsapp_inbox",
@@ -88,6 +94,39 @@ export const whatsAppProcessedMessagesTable = pgTable("whatsapp_processed_messag
     .defaultNow(),
 });
 
+export const whatsAppConversationMessagesTable = pgTable(
+  "whatsapp_conversation_messages",
+  {
+    id: serial("id").primaryKey(),
+    messageId: varchar("message_id", { length: 128 }).notNull(),
+    phoneNumber: varchar("phone_number", { length: 15 }).notNull(),
+    direction: whatsAppConversationDirection("direction").notNull(),
+    messageText: text("message_text").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    phoneSentAtIndex: index("whatsapp_conversation_phone_sent_at_idx").on(
+      table.phoneNumber,
+      table.sentAt,
+    ),
+    phoneMessageIdUnique: uniqueIndex(
+      "whatsapp_conversation_phone_message_id_unique",
+    ).on(table.phoneNumber, table.messageId),
+  }),
+);
+
+export const whatsAppConversationMemoryTable = pgTable(
+  "whatsapp_conversation_memory",
+  {
+    phoneNumber: varchar("phone_number", { length: 15 }).primaryKey(),
+    summary: text("summary").notNull().default(""),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+);
+
 export const insertWhatsAppAuthSchema = createInsertSchema(whatsAppAuthTable).omit({
   updatedAt: true,
 });
@@ -108,6 +147,16 @@ export const insertWhatsAppProcessedMessageSchema = createInsertSchema(
 ).omit({
   processedAt: true,
 });
+export const insertWhatsAppConversationMessageSchema = createInsertSchema(
+  whatsAppConversationMessagesTable,
+).omit({
+  id: true,
+});
+export const insertWhatsAppConversationMemorySchema = createInsertSchema(
+  whatsAppConversationMemoryTable,
+).omit({
+  updatedAt: true,
+});
 
 export type InsertWhatsAppAuth = z.infer<typeof insertWhatsAppAuthSchema>;
 export type InsertWhatsAppSettings = z.infer<typeof insertWhatsAppSettingsSchema>;
@@ -121,3 +170,13 @@ export type WhatsAppContact = typeof whatsAppContactsTable.$inferSelect;
 export type WhatsAppInboxMessage = typeof whatsAppInboxTable.$inferSelect;
 export type WhatsAppAuth = typeof whatsAppAuthTable.$inferSelect;
 export type WhatsAppProcessedMessage = typeof whatsAppProcessedMessagesTable.$inferSelect;
+export type InsertWhatsAppConversationMessage = z.infer<
+  typeof insertWhatsAppConversationMessageSchema
+>;
+export type InsertWhatsAppConversationMemory = z.infer<
+  typeof insertWhatsAppConversationMemorySchema
+>;
+export type WhatsAppConversationMessage =
+  typeof whatsAppConversationMessagesTable.$inferSelect;
+export type WhatsAppConversationMemory =
+  typeof whatsAppConversationMemoryTable.$inferSelect;

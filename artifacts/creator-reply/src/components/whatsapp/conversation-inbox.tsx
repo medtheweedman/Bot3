@@ -3,6 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   getGetWhatsAppStatusQueryKey,
   getListWhatsAppInboxQueryKey,
+  useAddWhatsAppContact,
+  useDeleteWhatsAppContact,
   useGenerateWhatsAppInboxReplySuggestions,
   useListWhatsAppInbox,
   useSendWhatsAppInboxReply,
@@ -48,6 +50,9 @@ function formatDate(value: string): string {
 type Conversation = {
   phoneNumber: string;
   displayName: string | null;
+  contactId: number | null;
+  isAdultApproved: boolean;
+  conversationSummary: string | null;
   messages: WhatsAppInboxMessage[];
   latestReceivedAt: string;
 };
@@ -62,10 +67,17 @@ function groupConversations(messages: WhatsAppInboxMessage[]): Conversation[] {
         conversation.latestReceivedAt = message.receivedAt;
         conversation.displayName = message.displayName ?? conversation.displayName;
       }
+      if (message.contactId !== null) conversation.contactId = message.contactId;
+      conversation.isAdultApproved ||= message.isAdultApproved;
+      conversation.conversationSummary =
+        message.conversationSummary ?? conversation.conversationSummary;
     } else {
       grouped.set(message.phoneNumber, {
         phoneNumber: message.phoneNumber,
         displayName: message.displayName,
+        contactId: message.contactId,
+        isAdultApproved: message.isAdultApproved,
+        conversationSummary: message.conversationSummary,
         messages: [message],
         latestReceivedAt: message.receivedAt,
       });
@@ -90,8 +102,8 @@ type MessageProps = {
 };
 
 function ConversationMessage({ message, connected, sending, onSend }: MessageProps) {
+  const queryClient = useQueryClient();
   const [reply, setReply] = useState(message.replyDraft ?? "");
-  const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestionsError, setSuggestionsError] = useState("");
   const generateSuggestions = useGenerateWhatsAppInboxReplySuggestions();
@@ -100,12 +112,17 @@ function ConversationMessage({ message, connected, sending, onSend }: MessagePro
   const replied = message.status === "replied";
 
   const requestSuggestions = () => {
-    if (!adultConfirmed) return;
+    if (!message.isAdultApproved) return;
     setSuggestionsError("");
     generateSuggestions.mutate(
       { inboxId: message.id, data: { adultConfirmed: true } },
       {
-        onSuccess: (result) => setSuggestions(result.suggestions),
+        onSuccess: (result) => {
+          setSuggestions(result.suggestions);
+          void queryClient.invalidateQueries({
+            queryKey: getListWhatsAppInboxQueryKey(),
+          });
+        },
         onError: (error) => setSuggestionsError(getErrorMessage(error)),
       },
     );
@@ -202,23 +219,15 @@ function ConversationMessage({ message, connected, sending, onSend }: MessagePro
             data-testid={`section-reply-suggestions-${message.id}`}
           >
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-relaxed text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={adultConfirmed}
-                  onChange={(event) => setAdultConfirmed(event.target.checked)}
-                  data-testid={`checkbox-adult-confirmation-${message.id}`}
-                  className="mt-0.5 size-3.5 shrink-0 accent-[hsl(var(--primary))]"
-                />
-                <span>
-                  I confirm this person is at least 18. This is only for these
-                  suggestions; it does not add them to an approved list.
-                </span>
-              </label>
+              <p className="max-w-[360px] text-[10px] leading-relaxed text-muted-foreground">
+                {message.isAdultApproved
+                  ? "This contact is marked 18+. Gemini can use the saved summary and full text history for context."
+                  : "Confirm this contact is 18+ in the conversation controls before using AI."}
+              </p>
               <button
                 type="button"
                 disabled={
-                  !adultConfirmed ||
+                  !message.isAdultApproved ||
                   generateSuggestions.isPending ||
                   suggestions.length > 0
                 }
@@ -241,9 +250,9 @@ function ConversationMessage({ message, connected, sending, onSend }: MessagePro
               </button>
             </div>
             <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">
-              When requested, this message and name are sent to Gemini to
-              generate two options. Nothing is sent on WhatsApp until you press
-              Send reply.
+              When requested, this conversation history and saved summary are
+              sent to Gemini to generate two options. Nothing is sent until you
+              press Send reply, unless global auto-reply is enabled.
             </p>
             {suggestionsError && (
               <p
@@ -332,6 +341,8 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
     },
   });
   const sendReply = useSendWhatsAppInboxReply();
+  const approveContact = useAddWhatsAppContact();
+  const removeContactApproval = useDeleteWhatsAppContact();
   const messages = inbox.data ?? [];
   const conversations = useMemo(() => groupConversations(messages), [messages]);
   const pendingCount = messages.filter((message) => message.status === "pending").length;
@@ -369,6 +380,56 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
     );
   };
 
+  const toggleAdultApproval = (conversation: Conversation) => {
+    setActionError("");
+    setActionMessage("");
+    if (conversation.isAdultApproved) {
+      if (
+        conversation.contactId === null ||
+        !window.confirm(
+          `Remove the 18+ approval for ${conversation.displayName || conversation.phoneNumber}? Auto-replies to this contact will stop.`,
+        )
+      ) {
+        return;
+      }
+      removeContactApproval.mutate(
+        { contactId: conversation.contactId },
+        {
+          onSuccess: () => {
+            setActionMessage("18+ approval removed.");
+            refreshInbox();
+          },
+          onError: (error) => setActionError(getErrorMessage(error)),
+        },
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Confirm that ${conversation.displayName || conversation.phoneNumber} is 18 or older? This is your confirmation; the app does not verify age automatically.`,
+      )
+    ) {
+      return;
+    }
+    approveContact.mutate(
+      {
+        data: {
+          phoneNumber: conversation.phoneNumber,
+          displayName: conversation.displayName,
+          adultConfirmed: true,
+        },
+      },
+      {
+        onSuccess: () => {
+          setActionMessage("Contact approved as 18+.");
+          refreshInbox();
+        },
+        onError: (error) => setActionError(getErrorMessage(error)),
+      },
+    );
+  };
+
   return (
     <section
       className="mt-5 rounded-[18px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--shadow-sm)]"
@@ -396,8 +457,8 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
 
       <div className="space-y-4 p-5 sm:p-6">
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Every new direct text message is included; no number approval is
-          required. Replies are sent only when you press Send reply.
+          New direct text messages and replies from this device are remembered
+          from pairing onward. Previous WhatsApp history is not imported.
         </p>
 
         {connection !== "connected" && (
@@ -532,6 +593,44 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
                       hidden={!expanded}
                       className="space-y-3 border-t border-[hsl(var(--border))] p-3 sm:p-4"
                     >
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--background)/.7)] p-3">
+                        <div className="min-w-[220px] flex-1">
+                          <p className="text-[9px] font-bold uppercase tracking-[.08em] text-muted-foreground">
+                            Conversation memory
+                          </p>
+                          <p className="mt-1.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed">
+                            {conversation.conversationSummary ||
+                              "Memory updates when AI suggestions or an automatic reply are generated."}
+                          </p>
+                          <p className="mt-1.5 text-[9px] leading-relaxed text-muted-foreground">
+                            Full text is stored in this project and sent to Gemini
+                            when generating replies.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={
+                            approveContact.isPending ||
+                            removeContactApproval.isPending ||
+                            (conversation.isAdultApproved &&
+                              conversation.contactId === null)
+                          }
+                          onClick={() => toggleAdultApproval(conversation)}
+                          data-testid={`button-toggle-adult-approval-${conversation.phoneNumber}`}
+                          className={`h-9 shrink-0 rounded-[9px] border px-3 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            conversation.isAdultApproved
+                              ? "border-[hsl(var(--border))] text-muted-foreground hover:text-[hsl(var(--destructive))]"
+                              : "border-[hsl(var(--primary)/.25)] bg-[hsl(var(--primary)/.07)] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/.12)]"
+                          }`}
+                        >
+                          {approveContact.isPending ||
+                          removeContactApproval.isPending
+                            ? "Saving…"
+                            : conversation.isAdultApproved
+                              ? "Remove 18+ approval"
+                              : "Confirm contact is 18+"}
+                        </button>
+                      </div>
                       {conversation.messages.map((message) => (
                         <ConversationMessage
                           key={message.id}

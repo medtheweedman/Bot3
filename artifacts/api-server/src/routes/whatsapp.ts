@@ -23,6 +23,7 @@ import {
 import {
   db,
   whatsAppContactsTable,
+  whatsAppConversationMemoryTable,
   whatsAppInboxTable,
   whatsAppSettingsTable,
 } from "@workspace/db";
@@ -32,9 +33,13 @@ import {
 } from "../lib/whatsapp-manager";
 import {
   CreatorReplyServiceError,
-  generateCreatorReply,
-  generateCreatorReplySuggestions,
+  generateWhatsAppReplySuggestionsWithMemory,
+  generateWhatsAppReplyWithMemory,
 } from "../lib/creator-reply-service";
+import {
+  getWhatsAppConversationContext,
+  saveWhatsAppConversationSummary,
+} from "../lib/whatsapp-memory";
 
 const router: IRouter = Router();
 
@@ -47,14 +52,17 @@ function normalizePhoneNumber(input: string): string | null {
 function formatInboxMessage(
   message: typeof whatsAppInboxTable.$inferSelect,
   isAdultApproved: boolean,
+  conversationSummary: string | null = null,
 ) {
   return {
     id: message.id,
+    contactId: message.contactId,
     phoneNumber: `+${message.phoneNumber}`,
     displayName: message.displayName,
     messageText: message.messageText,
     replyDraft: message.replyDraft,
     isAdultApproved,
+    conversationSummary,
     status: message.status,
     receivedAt: message.receivedAt.toISOString(),
   };
@@ -105,17 +113,35 @@ router.patch("/whatsapp/settings", async (req, res): Promise<void> => {
   const creatorName = parsed.data.creatorName.trim();
   const personaNotes = parsed.data.personaNotes?.trim() || null;
   if (parsed.data.autoReplyEnabled) {
-    res.status(400).json({
-      error: "Automatic replies are disabled. Send replies manually from the inbox.",
-    });
-    return;
+    const [approvedContactCount] = await db
+      .select({ value: count() })
+      .from(whatsAppContactsTable)
+      .where(eq(whatsAppContactsTable.adultConfirmed, true));
+    if (!approvedContactCount?.value) {
+      res.status(400).json({
+        error: "Confirm at least one contact is 18 or older before enabling auto-replies.",
+      });
+      return;
+    }
+    if ((await whatsAppManager.getStatus()).connection !== "connected") {
+      res.status(400).json({
+        error: "Connect WhatsApp before enabling auto-replies.",
+      });
+      return;
+    }
+    if (!process.env.GEMINI_API_KEY) {
+      res.status(503).json({
+        error: "Gemini is not configured for automatic replies.",
+      });
+      return;
+    }
   }
 
   await db
     .insert(whatsAppSettingsTable)
     .values({
       id: 1,
-      autoReplyEnabled: false,
+      autoReplyEnabled: parsed.data.autoReplyEnabled,
       creatorName,
       tone: parsed.data.tone,
       personaNotes,
@@ -123,7 +149,7 @@ router.patch("/whatsapp/settings", async (req, res): Promise<void> => {
     .onConflictDoUpdate({
       target: whatsAppSettingsTable.id,
       set: {
-        autoReplyEnabled: false,
+        autoReplyEnabled: parsed.data.autoReplyEnabled,
         creatorName,
         tone: parsed.data.tone,
         personaNotes,
@@ -174,7 +200,18 @@ router.post("/whatsapp/contacts", async (req, res): Promise<void> => {
         displayName: parsed.data.displayName?.trim() || null,
         adultConfirmed: true,
       })
+      .onConflictDoUpdate({
+        target: whatsAppContactsTable.phoneNumber,
+        set: {
+          displayName: parsed.data.displayName?.trim() || null,
+          adultConfirmed: true,
+        },
+      })
       .returning();
+    await db
+      .update(whatsAppInboxTable)
+      .set({ contactId: contact.id, updatedAt: new Date() })
+      .where(eq(whatsAppInboxTable.phoneNumber, phoneNumber));
     res
       .status(201)
       .json(
@@ -236,18 +273,26 @@ router.get("/whatsapp/inbox", async (_req, res): Promise<void> => {
     .select({
       message: whatsAppInboxTable,
       adultConfirmed: whatsAppContactsTable.adultConfirmed,
+      summary: whatsAppConversationMemoryTable.summary,
     })
     .from(whatsAppInboxTable)
     .leftJoin(
       whatsAppContactsTable,
       eq(whatsAppInboxTable.contactId, whatsAppContactsTable.id),
     )
-    .orderBy(desc(whatsAppInboxTable.receivedAt))
-    ;
+    .leftJoin(
+      whatsAppConversationMemoryTable,
+      eq(
+        whatsAppInboxTable.phoneNumber,
+        whatsAppConversationMemoryTable.phoneNumber,
+      ),
+    )
+    .where(ne(whatsAppInboxTable.status, "archived"))
+    .orderBy(desc(whatsAppInboxTable.receivedAt));
   res.json(
     ListWhatsAppInboxResponse.parse(
-      messages.map(({ message, adultConfirmed }) =>
-        formatInboxMessage(message, adultConfirmed === true),
+      messages.map(({ message, adultConfirmed, summary }) =>
+        formatInboxMessage(message, adultConfirmed === true, summary),
       ),
     ),
   );
@@ -282,11 +327,17 @@ router.post(
       });
       return;
     }
+    if (!(await isAdultApprovedContact(message.contactId))) {
+      res.status(403).json({
+        error: "Confirm this contact is 18 or older before requesting AI suggestions.",
+      });
+      return;
+    }
 
     const settings = await whatsAppManager.getStatus();
     let suggestions: string[];
     try {
-      suggestions = await generateCreatorReplySuggestions(
+      const generated = await generateWhatsAppReplySuggestionsWithMemory(
         {
           question: message.messageText,
           adultConfirmed: true,
@@ -297,7 +348,13 @@ router.post(
             ? { personaNotes: settings.personaNotes }
             : {}),
         },
+        await getWhatsAppConversationContext(message.phoneNumber),
         req.log,
+      );
+      suggestions = generated.suggestions;
+      await saveWhatsAppConversationSummary(
+        message.phoneNumber,
+        generated.summary,
       );
     } catch (error) {
       if (error instanceof CreatorReplyServiceError) {
@@ -359,8 +416,9 @@ router.post(
     }
 
     let reply: string;
+    let conversationSummary = "";
     try {
-      reply = await generateCreatorReply(
+      const generated = await generateWhatsAppReplyWithMemory(
         {
           question: message.messageText,
           adultConfirmed: true,
@@ -371,7 +429,14 @@ router.post(
             ? { personaNotes: settings.personaNotes }
             : {}),
         },
+        await getWhatsAppConversationContext(message.phoneNumber),
         req.log,
+      );
+      reply = generated.reply;
+      conversationSummary = generated.summary;
+      await saveWhatsAppConversationSummary(
+        message.phoneNumber,
+        generated.summary,
       );
     } catch (error) {
       if (error instanceof CreatorReplyServiceError) {
@@ -402,7 +467,7 @@ router.post(
     const isAdultApproved = await isAdultApprovedContact(updated.contactId);
     res.json(
       GenerateWhatsAppInboxDraftResponse.parse(
-        formatInboxMessage(updated, isAdultApproved),
+        formatInboxMessage(updated, isAdultApproved, conversationSummary),
       ),
     );
   },
@@ -489,8 +554,9 @@ router.delete(
       return;
     }
 
-    const [dismissed] = await db
-      .delete(whatsAppInboxTable)
+    const [archived] = await db
+      .update(whatsAppInboxTable)
+      .set({ status: "archived", updatedAt: new Date() })
       .where(
         and(
           eq(whatsAppInboxTable.id, params.data.inboxId),
@@ -498,7 +564,7 @@ router.delete(
         ),
       )
       .returning({ id: whatsAppInboxTable.id });
-    if (!dismissed) {
+    if (!archived) {
       const [existing] = await db
         .select({ status: whatsAppInboxTable.status })
         .from(whatsAppInboxTable)

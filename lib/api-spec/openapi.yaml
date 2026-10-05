@@ -530,6 +530,9 @@ components:
         id:
           type: integer
           minimum: 1
+        contactId:
+          type: ["integer", "null"]
+          minimum: 1
         phoneNumber:
           type: string
         displayName:
@@ -543,13 +546,15 @@ components:
           maxLength: 4000
         isAdultApproved:
           type: boolean
+        conversationSummary:
+          type: ["string", "null"]
         status:
           type: string
-          enum: [pending, sending, uncertain, replied]
+          enum: [pending, sending, uncertain, replied, archived]
         receivedAt:
           type: string
           format: date-time
-      required: [id, phoneNumber, displayName, messageText, replyDraft, isAdultApproved, status, receivedAt]
+      required: [id, contactId, phoneNumber, displayName, messageText, replyDraft, isAdultApproved, conversationSummary, status, receivedAt]
     WhatsAppInboxMessageList:
       type: array
       items:

@@ -5,6 +5,7 @@ import {
   useConnectWhatsApp,
   useDisconnectWhatsApp,
   useGetWhatsAppStatus,
+  useUpdateWhatsAppSettings,
 } from "@workspace/api-client-react";
 import { ConversationInbox } from "@/components/whatsapp/conversation-inbox";
 import {
@@ -38,6 +39,7 @@ function getErrorMessage(error: unknown): string {
 function WhatsAppPage() {
   const queryClient = useQueryClient();
   const [connectError, setConnectError] = useState("");
+  const [autoReplyError, setAutoReplyError] = useState("");
   const status = useGetWhatsAppStatus({
     query: {
       queryKey: getGetWhatsAppStatusQueryKey(),
@@ -50,12 +52,41 @@ function WhatsAppPage() {
   });
   const connect = useConnectWhatsApp();
   const disconnect = useDisconnectWhatsApp();
+  const updateSettings = useUpdateWhatsAppSettings();
   const currentStatus = status.data;
 
   const refreshStatus = () => {
     void queryClient.invalidateQueries({
       queryKey: getGetWhatsAppStatusQueryKey(),
     });
+  };
+
+  const toggleAutoReply = () => {
+    if (!currentStatus) return;
+    const nextEnabled = !currentStatus.autoReplyEnabled;
+    if (
+      nextEnabled &&
+      !window.confirm(
+        "Turn on automatic replies? New messages from contacts you have confirmed are 18+ may receive an automatically generated, non-explicit reply. You can turn this off at any time.",
+      )
+    ) {
+      return;
+    }
+    setAutoReplyError("");
+    updateSettings.mutate(
+      {
+        data: {
+          autoReplyEnabled: nextEnabled,
+          creatorName: currentStatus.creatorName,
+          tone: currentStatus.tone,
+          personaNotes: currentStatus.personaNotes,
+        },
+      },
+      {
+        onSuccess: refreshStatus,
+        onError: (error) => setAutoReplyError(getErrorMessage(error)),
+      },
+    );
   };
 
   const connectionLabel =
@@ -87,8 +118,8 @@ function WhatsAppPage() {
                 </em>
               </h1>
               <p className="mt-4 max-w-[520px] text-[14px] leading-[1.7] text-muted-foreground">
-                See incoming conversations from every number and reply yourself.
-                No contact approval list and no automatic replies.
+                Keep conversation context, draft replies with Gemini, or enable
+                guarded automatic replies for contacts you confirm are 18+.
               </p>
             </div>
             <div
@@ -363,6 +394,59 @@ function WhatsAppPage() {
                     )}
                   </div>
                 </div>
+              </section>
+
+              <section
+                className="reveal mt-5 rounded-[18px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-[var(--shadow-sm)] sm:p-6"
+                data-testid="section-whatsapp-auto-reply"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="max-w-[620px]">
+                    <h2 className="text-[14px] font-bold tracking-[-.02em]">
+                      Automatic replies
+                    </h2>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      When enabled, Gemini can send short, non-explicit replies
+                      to contacts you have confirmed are 18+. Messages from
+                      unapproved numbers stay in your inbox.
+                    </p>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <span className="text-[10px] font-bold">
+                      {currentStatus?.autoReplyEnabled ? "On" : "Off"}
+                    </span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label="Enable automatic WhatsApp replies"
+                      checked={currentStatus?.autoReplyEnabled ?? false}
+                      disabled={
+                        updateSettings.isPending ||
+                        currentStatus?.connection !== "connected" ||
+                        (currentStatus?.approvedContactCount ?? 0) === 0
+                      }
+                      onChange={toggleAutoReply}
+                      data-testid="toggle-whatsapp-auto-reply"
+                      className="size-4 accent-[hsl(var(--primary))] disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                  </label>
+                </div>
+                <p className="mt-3 text-[9px] leading-relaxed text-muted-foreground">
+                  {(currentStatus?.approvedContactCount ?? 0) === 0
+                    ? "Open a conversation and confirm a contact is 18+ before enabling this."
+                    : currentStatus?.connection !== "connected"
+                      ? "Connect WhatsApp before enabling automatic replies."
+                      : "Only new incoming messages are considered; enabling this does not send replies to older inbox messages."}
+                </p>
+                {autoReplyError && (
+                  <p
+                    role="alert"
+                    className="mt-3 text-[10px] text-[hsl(var(--destructive))]"
+                    data-testid="status-auto-reply-error"
+                  >
+                    {autoReplyError}
+                  </p>
+                )}
               </section>
 
               <ConversationInbox connection={currentStatus?.connection} />
