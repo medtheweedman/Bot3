@@ -11,6 +11,7 @@ import type { WhatsAppInboxMessage } from "@workspace/api-client-react";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   Clock3,
   LoaderCircle,
   MessageSquareText,
@@ -321,6 +322,9 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  const [expandedConversations, setExpandedConversations] = useState<Set<string>>(
+    () => new Set(),
+  );
   const inbox = useListWhatsAppInbox({
     query: {
       queryKey: getListWhatsAppInboxQueryKey(),
@@ -331,6 +335,14 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
   const messages = inbox.data ?? [];
   const conversations = useMemo(() => groupConversations(messages), [messages]);
   const pendingCount = messages.filter((message) => message.status === "pending").length;
+  const toggleConversation = (phoneNumber: string) => {
+    setExpandedConversations((current) => {
+      const next = new Set(current);
+      if (next.has(phoneNumber)) next.delete(phoneNumber);
+      else next.add(phoneNumber);
+      return next;
+    });
+  };
 
   const refreshInbox = () => {
     void queryClient.invalidateQueries({ queryKey: getListWhatsAppInboxQueryKey() });
@@ -370,7 +382,7 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
           <div>
             <h2 className="text-[14px] font-bold tracking-[-.02em]">Conversations</h2>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Messages from every number, grouped by conversation.
+              Open a contact to view its messages and replies.
             </p>
           </div>
         </div>
@@ -444,44 +456,98 @@ export function ConversationInbox({ connection }: ConversationInboxProps) {
           </div>
         ) : conversations.length ? (
           <div className="space-y-4" data-testid="list-whatsapp-inbox">
-            {conversations.map((conversation) => (
-              <section
-                key={conversation.phoneNumber}
-                className="overflow-hidden rounded-[14px] border border-[hsl(var(--border))]"
-                data-testid={`conversation-${conversation.phoneNumber}`}
-              >
-                <header className="flex items-center justify-between gap-3 bg-[hsl(var(--background)/.7)] px-4 py-3">
-                  <div className="min-w-0">
-                    <h3 className="truncate text-[12px] font-bold">
-                      {conversation.displayName || conversation.phoneNumber}
-                    </h3>
-                    {conversation.displayName && (
-                      <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
-                        {conversation.phoneNumber}
-                      </p>
-                    )}
-                  </div>
-                  <span className="shrink-0 font-mono text-[9px] text-muted-foreground">
-                    {conversation.messages.length}{" "}
-                    {conversation.messages.length === 1 ? "message" : "messages"}
-                  </span>
-                </header>
-                <div className="space-y-3 border-t border-[hsl(var(--border))] p-3 sm:p-4">
-                  {conversation.messages.map((message) => (
-                    <ConversationMessage
-                      key={message.id}
-                      message={message}
-                      connected={connection === "connected"}
-                      sending={
-                        sendReply.isPending &&
-                        sendReply.variables?.inboxId === message.id
-                      }
-                      onSend={(reply) => handleSend(message, reply)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {conversations.map((conversation) => {
+                const expanded = expandedConversations.has(conversation.phoneNumber);
+                const latestMessage =
+                  conversation.messages[conversation.messages.length - 1];
+                const contactName =
+                  conversation.displayName || conversation.phoneNumber;
+                const pendingInConversation = conversation.messages.filter(
+                  (message) => message.status === "pending",
+                ).length;
+                const messageListId = `conversation-messages-${conversation.phoneNumber.replace(
+                  /[^a-zA-Z0-9_-]/g,
+                  "_",
+                )}`;
+
+                return (
+                  <section
+                    key={conversation.phoneNumber}
+                    className="overflow-hidden rounded-[14px] border border-[hsl(var(--border))]"
+                    data-testid={`conversation-${conversation.phoneNumber}`}
+                  >
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      aria-controls={messageListId}
+                      aria-label={`${expanded ? "Collapse" : "Expand"} messages from ${contactName}`}
+                      onClick={() => toggleConversation(conversation.phoneNumber)}
+                      className="flex w-full items-center justify-between gap-3 bg-[hsl(var(--background)/.7)] px-4 py-3 text-left transition hover:bg-[hsl(var(--background))]"
+                      data-testid={`button-toggle-conversation-${conversation.phoneNumber}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-[12px] font-bold">
+                          {contactName}
+                        </h3>
+                        {conversation.displayName && (
+                          <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                            {conversation.phoneNumber}
+                          </p>
+                        )}
+                        {latestMessage && (
+                          <p className="mt-1 truncate text-[10px] leading-relaxed text-muted-foreground">
+                            {latestMessage.messageText}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <div className="text-right">
+                          <p className="font-mono text-[9px] text-muted-foreground">
+                            {conversation.messages.length}{" "}
+                            {conversation.messages.length === 1
+                              ? "message"
+                              : "messages"}
+                          </p>
+                          {pendingInConversation > 0 && (
+                            <p className="mt-1 text-[9px] font-semibold text-[hsl(var(--primary))]">
+                              {pendingInConversation} need
+                              {pendingInConversation === 1 ? "s" : ""} reply
+                            </p>
+                          )}
+                          <p className="mt-1 font-mono text-[8px] text-muted-foreground">
+                            {formatDate(conversation.latestReceivedAt)}
+                          </p>
+                        </div>
+                        <ChevronDown
+                          size={14}
+                          aria-hidden="true"
+                          className={`shrink-0 text-muted-foreground transition-transform ${
+                            expanded ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    <div
+                      id={messageListId}
+                      hidden={!expanded}
+                      className="space-y-3 border-t border-[hsl(var(--border))] p-3 sm:p-4"
+                    >
+                      {conversation.messages.map((message) => (
+                        <ConversationMessage
+                          key={message.id}
+                          message={message}
+                          connected={connection === "connected"}
+                          sending={
+                            sendReply.isPending &&
+                            sendReply.variables?.inboxId === message.id
+                          }
+                          onSend={(reply) => handleSend(message, reply)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+            })}
           </div>
         ) : (
           <div
